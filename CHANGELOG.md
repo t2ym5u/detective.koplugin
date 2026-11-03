@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.0] - 2026-11-02
+
+### Added
+- Multiplayer mode: also listed as "Detective · multiplayer" under Tools →
+  Games → Party & quiz, and switchable in the game (menu → Mode). The table
+  investigates one case together; the clues come out one at a time (Next
+  clue), anyone may accuse once per case (Accuse asks who is accusing). A
+  wrong accusation rules that player out of the case; the first right one
+  wins it and scores 1 point plus 1 per clue still hidden. A match is 1, 3,
+  5 or 7 cases (Rounds) and ends on a final scoreboard. Players, their names
+  and the match in progress are saved; the solo case is kept apart.
+- Separate multiplayer rules (Rules opens the rules of the mode played, with
+  a button to read the other mode's).
+
 ## [1.0.1] - 2026-11-02
 
 ### Changed
