@@ -22,6 +22,7 @@ local Detective = PluginBase:extend{
     name      = "detective",
     menu_text = _("Detective"),
     menu_hint = "tools",
+    party_mode = true,
 }
 
 function Detective:createScreen()

@@ -27,6 +27,24 @@ teapot? Read the clues, fill the logic grid, accuse.
 - "One hour before" means the time slot just before; "earlier than" means any
   earlier slot.
 
+## Multiplayer
+
+*Detective · multiplayer* (Tools → Games → Party & quiz, or menu → *Mode*):
+lay the reader in the middle of the table and investigate together.
+
+- A match is 1, 3, 5 or 7 cases (*Rounds*); 2 to 8 players, names typed once
+  and remembered.
+- Each case opens with **one clue**; *Next clue* reveals another one.
+- Anyone may **accuse once per case**: *Accuse* asks who is accusing, then the
+  culprit, place and object. Wrong: that player can't accuse again in this
+  case (they keep helping). Right: that player wins the case.
+- **Points**: 1 + the number of clues still hidden. A 7-clue case solved with
+  3 clues shown scores 5; with all 7 shown, 1. If everyone accuses wrongly,
+  or the case is given up (*Show solution*), nobody scores.
+- The clue page shows who may still accuse and the scores; the status line
+  shows the case, the clues shown and the current prize. The final
+  scoreboard names the winner (or a tie). No hints in multiplayer.
+
 ## Features
 
 - **Generated cases**: Easy 3 suspects × 3 categories, Medium 4 × 4 (with
