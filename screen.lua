@@ -34,6 +34,7 @@ local Packs     = lrequire("packs")
 local Clues     = lrequire("clues")
 local LogicGrid = lrequire("logic_grid")
 local PartyCase = lrequire("party_case")
+local Content   = lrequire("content")
 
 local DeviceScreen = Device.screen
 local DPI_SCALE = DeviceScreen:scaleBySize(1000) / 1000
@@ -202,12 +203,7 @@ function DetectiveScreen:stateKey()
 end
 
 function DetectiveScreen:content()
-    local key = "content_" .. self.lang
-    if not self._content or self._content_key ~= key then
-        self._content = lrequire(key)
-        self._content_key = key
-    end
-    return self._content
+    return Content.get(self.lang)
 end
 
 function DetectiveScreen:attachWording()
@@ -853,6 +849,13 @@ function DetectiveScreen:buildLayout()
     end
     self[1] = self.layout
     self:updateStatus()
+end
+
+-- The case content (names, places, objects) is only needed while a game is
+-- open: drop it when the screen closes (the next game reads its language's
+-- file again).
+function DetectiveScreen:onCloseWidget()
+    Content.release()
 end
 
 return DetectiveScreen
