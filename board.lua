@@ -5,9 +5,10 @@
 -- A case has N suspects and K categories: 1 = suspect, 2 = place,
 -- 3 = object, 4 = time (ordered). Every value of every category belongs to
 -- exactly one suspect; the solution is, per category, which suspect owns
--- each value. Clues constrain that, and the generator keeps adding true
--- clues until exactly one solution is left, then drops every clue the
--- solution doesn't need.
+-- each value. Clues constrain that. The generator keeps adding true clues
+-- until the logic solver below (the paper logic grid, never trial and
+-- error) fills every grid, then drops every clue it can do without, and
+-- grades the case by how much cross-grid and time reasoning it needs.
 --
 -- Clue kinds (a, b, b2 are entities { c = category, v = value index }):
 --   same    a and b belong to the same suspect
@@ -22,24 +23,31 @@ Board.__index = Board
 
 Board.SUSPECT, Board.PLACE, Board.OBJECT, Board.TIME = 1, 2, 3, 4
 
+-- What each level asks for (1.2.0). Before, a case only had to have one
+-- solution, so most Medium and Hard cases could not be finished without
+-- trying an answer to see if it breaks.
+--   tier          the hardest reasoning allowed (see newLogic)
+--   min/max_t2    how many cross-grid (tier-2) deductions it takes
+--   min/max_t3    how many time-order (tier-3) deductions it takes
+-- Easy: 3 x 3, a few cross-grid steps. Medium: 4 x 4 with times, at most
+-- 25 cross-grid steps. Hard: 5 x 5 with times, at least 28 cross-grid and
+-- 15 time-order steps.
 Board.LEVELS = {
-    easy   = { n = 3, k = 3, weights = { same = 3,   diff = 4, either = 2 } },
-    medium = { n = 4, k = 4, weights = { same = 1.5, diff = 4, either = 2,   before1 = 1.5, earlier = 1.5 } },
-    hard   = { n = 5, k = 4, weights = { same = 0.6, diff = 4, either = 2.5, before1 = 2,   earlier = 2 } },
+    easy   = { n = 3, k = 3, tier = 2, weights = { same = 3,   diff = 4, either = 2 },
+               min_t2 = 0, max_t2 = 4, min_t3 = 0, max_t3 = 0 },
+    medium = { n = 4, k = 4, tier = 3, weights = { same = 1.5, diff = 4, either = 2,   before1 = 1.5, earlier = 1.5 },
+               min_t2 = 0, max_t2 = 25, min_t3 = 0, max_t3 = 20 },
+    hard   = { n = 5, k = 4, tier = 3, weights = { same = 0.6, diff = 4, either = 2.5, before1 = 2,   earlier = 2 },
+               min_t2 = 28, max_t2 = math.huge, min_t3 = 15, max_t3 = math.huge },
 }
 Board.LEVEL_ORDER = { "easy", "medium", "hard" }
 
--- Search budgets, in solver nodes. A case that needs more is thrown away and
--- drawn again, so generation time is bounded on any device.
-Board.COUNT_BUDGET = 30000   -- one solution count
-Board.PRUNE_BUDGET = 60000   -- one count while dropping unneeded clues
-Board.TRY_BUDGET   = 120000  -- one drawn solution and its clues
-Board.GEN_BUDGET   = 400000  -- the whole case; then one last plain try
-Board.MAX_TRIES    = 12
-Board.HARD_CAP     = 1500000 -- past this, pruning stops and keeps what is left
--- The last-resort clue mix: plain "same"/"diff" clues pin a solution down
--- fast, so this try practically always fits.
-Board.FALLBACK_WEIGHTS = { same = 3, diff = 4, either = 1 }
+-- Cases drawn per generation at most; the first one inside its level's
+-- window is kept, else the closest (every one is checked by the solver).
+Board.MAX_TRIES = 12
+-- Node budget of one countSolutions call (a plain search, used by the
+-- specs to cross-check the logic solver).
+Board.COUNT_BUDGET = 30000
 
 local function shuffle(t, rnd)
     for i = #t, 2, -1 do
@@ -226,6 +234,303 @@ function Board.countSolutions(n, k, clues, limit, budget)
 end
 
 -- ---------------------------------------------------------------------------
+-- Logic solver (1.2.0): the paper logic grid, no trial and error.
+--
+-- It works on the same pair grids the player fills: for every two entities
+-- of different categories, "same suspect" (yes), "different" (no) or not
+-- known yet. Every deduction follows from the clues and from what is
+-- already marked; it never assumes a mark to see what breaks. The case is
+-- solved when every cell of every grid is marked, so a case it finishes
+-- has exactly one solution.
+--
+--   tier 1  what a beginner does inside one grid: the "is / is not" clues,
+--           an "either b or b2" clue crosses a out of every other value of
+--           b's category (and gives the other one once one is crossed), a
+--           dot crosses out its row and column, the last empty cell of a
+--           row or column is a dot.
+--   tier 2  across grids: a dot copies the row of one entity onto the
+--           other ("Mozart is at the Louvre, the Louvre is not where the
+--           teapot was, so Mozart did not have the teapot"); two entities
+--           that can't share any value of a third category are different
+--           people; and someone ruled out of both b and b2 can't be a of
+--           "a is b or b2".
+--   tier 3  time order: "one hour before" / "earlier than" keep only the
+--           time slots each side can still have.
+-- Tier 2 and 3 run one deduction at a time, and only when the lower tiers
+-- are stuck, so their counts measure how much of the case needs them.
+-- ---------------------------------------------------------------------------
+
+local YES, NO = 1, 2
+
+-- A solver for an n x k case. :add(clue) records a clue (a clue only ever
+-- adds deductions, so the generator adds them one by one on the same
+-- solver); :run(max_tier) deduces until stuck and returns true when every
+-- grid is filled. :stats() gives the tier-2 and tier-3 step counts.
+local function newLogic(n, k)
+    local E = n * k
+    local R, cat, off = {}, {}, {}
+    for x = 1, E * E do R[x] = 0 end
+    for i = 1, E do
+        cat[i] = math.floor((i - 1) / n) + 1
+        off[i] = (i - 1) * E
+    end
+    local unknown = n * n * k * (k - 1) / 2
+    local fixed, either, timed = {}, {}, {}
+    local t2, t3 = 0, 0
+    local bad, single = false, false
+
+    local function id(e) return (e.c - 1) * n + e.v end
+    -- Marks (i, j) as v (YES or NO); true if it is new.
+    local function set(i, j, v)
+        if cat[i] == cat[j] then
+            if (i == j) ~= (v == YES) then bad = true end
+            return false
+        end
+        local x = off[i] + j
+        local cur = R[x]
+        if cur == v then return false end
+        if cur ~= 0 then bad = true return false end
+        R[x] = v
+        R[off[j] + i] = v
+        unknown = unknown - 1
+        return true
+    end
+
+    -- Tier 1, all at once: returns true if anything changed.
+    local function tier1()
+        local ch = false
+        for _, cl in ipairs(fixed) do
+            if set(cl[1], cl[2], cl[3]) then ch = true end
+        end
+        for _, cl in ipairs(either) do
+            local a, b, b2, base = cl[1], cl[2], cl[3], cl[4]
+            for x = base + 1, base + n do
+                if x ~= b and x ~= b2 and set(a, x, NO) then ch = true end
+            end
+            if R[off[a] + b] == NO and set(a, b2, YES) then ch = true end
+            if R[off[a] + b2] == NO and set(a, b, YES) then ch = true end
+        end
+        for i = 1, E do
+            local oi, ci = off[i], cat[i]
+            for c = 1, k do
+                if c ~= ci then
+                    local base = (c - 1) * n
+                    local yes, open, last = nil, 0, nil
+                    for j = base + 1, base + n do
+                        local r = R[oi + j]
+                        if r == YES then yes = j end
+                        if r ~= NO then open = open + 1; last = j end
+                    end
+                    if open == 0 then bad = true end
+                    if yes then
+                        if open > 1 then
+                            for j = base + 1, base + n do
+                                if j ~= yes and set(i, j, NO) then ch = true end
+                            end
+                        end
+                    elseif open == 1 then
+                        if set(i, last, YES) then ch = true end
+                    end
+                end
+            end
+        end
+        return ch
+    end
+
+    -- Tier 2: one deduction when counting (single), else all it finds.
+    -- A dot copies one entity's marks onto the other.
+    local function dots()
+        local any = false
+        for i = 1, E do
+            local oi, ci = off[i], cat[i]
+            for c = 1, k do
+                if c ~= ci then
+                    local base, j = (c - 1) * n, nil
+                    for x = base + 1, base + n do
+                        if R[oi + x] == YES then j = x break end
+                    end
+                    if j then
+                        local oj = off[j]
+                        for l = 1, E do
+                            local cl = cat[l]
+                            if cl ~= ci and cl ~= c then
+                                local r = R[oj + l]
+                                if r ~= 0 and R[oi + l] == 0 then
+                                    set(i, l, r)
+                                    if single then return true end
+                                    any = true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return any
+    end
+    -- No value of a third category left in common: different people.
+    -- "a is b or b2": whoever is neither b nor b2 is not a.
+    local function apart()
+        local any = false
+        for i = 1, E do
+            local oi, ci = off[i], cat[i]
+            for l = i + 1, E do
+                local cl = cat[l]
+                if cl ~= ci and R[oi + l] == 0 then
+                    local ol = off[l]
+                    for c = 1, k do
+                        if c ~= ci and c ~= cl then
+                            local base, shared = (c - 1) * n, false
+                            for x = base + 1, base + n do
+                                if R[oi + x] ~= NO and R[ol + x] ~= NO then shared = true break end
+                            end
+                            if not shared then
+                                set(i, l, NO)
+                                if single then return true end
+                                any = true
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        for _, cl in ipairs(either) do
+            local a, b, b2 = cl[1], cl[2], cl[3]
+            local ca, cb = cat[a], cat[b]
+            for x = 1, E do
+                local cx = cat[x]
+                if cx ~= ca and cx ~= cb then
+                    local ox = off[x]
+                    if R[ox + a] == 0 and R[ox + b] == NO and R[ox + b2] == NO then
+                        set(x, a, NO)
+                        if single then return true end
+                        any = true
+                    end
+                end
+            end
+        end
+        return any
+    end
+
+    local function tier2()
+        if single then return dots() or apart() end
+        local any = dots()
+        return apart() or any
+    end
+
+    -- Tier 3: time order (same counting rule as tier 2).
+    local tbase = 3 * n
+    local ta, tb = {}, {}
+    local function tier3()
+        local any = false
+        for _, cl in ipairs(timed) do
+            local a, b, one = cl[1], cl[2], cl[3]
+            if cat[a] ~= cat[b] and R[off[a] + b] == 0 then
+                set(a, b, NO)
+                if single then return true end
+                any = true
+            end
+            local oa, ob = off[a], off[b]
+            for t = 1, n do
+                ta[t] = R[oa + tbase + t] ~= NO
+                tb[t] = R[ob + tbase + t] ~= NO
+            end
+            for t = 1, n do
+                local okA, okB = false, false
+                if one then
+                    okA = t < n and tb[t + 1]
+                    okB = t > 1 and ta[t - 1]
+                else
+                    for u = t + 1, n do if tb[u] then okA = true break end end
+                    for u = 1, t - 1 do if ta[u] then okB = true break end end
+                end
+                if ta[t] and not okA then
+                    set(a, tbase + t, NO)
+                    if single then return true end
+                    any = true
+                end
+                if tb[t] and not okB then
+                    set(b, tbase + t, NO)
+                    if single then return true end
+                    any = true
+                end
+            end
+        end
+        return any
+    end
+
+    local L = {}
+    function L.add(cl)
+        local a, b = id(cl.a), id(cl.b)
+        if cl.kind == "same" then
+            fixed[#fixed + 1] = { a, b, YES }
+        elseif cl.kind == "diff" then
+            fixed[#fixed + 1] = { a, b, NO }
+        elseif cl.kind == "either" then
+            either[#either + 1] = { a, b, id(cl.b2), (cl.b.c - 1) * n }
+        else
+            timed[#timed + 1] = { a, b, cl.kind == "before1" }
+        end
+    end
+    -- single: tier 2 and 3 make one deduction per call (to count them);
+    -- otherwise every one they find (the same end result, faster).
+    function L.run(max_tier, one_by_one)
+        single = one_by_one
+        if not single then
+            -- Same end result, cheapest rules first.
+            while unknown > 0 and not bad do
+                if not (tier1() or (max_tier >= 2 and dots())
+                        or (max_tier >= 3 and k >= 4 and tier3())
+                        or (max_tier >= 2 and apart())) then
+                    break
+                end
+            end
+            return unknown == 0 and not bad
+        end
+        while unknown > 0 and not bad do
+            if not tier1() then
+                if max_tier >= 2 and tier2() then
+                    t2 = t2 + 1
+                elseif max_tier >= 3 and k >= 4 and tier3() then
+                    t3 = t3 + 1
+                else
+                    break
+                end
+            end
+        end
+        return unknown == 0 and not bad
+    end
+    function L.stats() return t2, t3 end
+    -- Entities i and j ((category - 1) * n + value): true if the same
+    -- suspect, false if not, nil while unknown.
+    function L.mark(i, j)
+        local r = R[off[i] + j]
+        if r == 0 then return nil end
+        return r == YES
+    end
+    function L.broken() return bad end
+    -- Does an "is / is not" clue only state what is already marked?
+    function L.known(cl)
+        if cl.kind ~= "same" and cl.kind ~= "diff" then return false end
+        local a, b = id(cl.a), id(cl.b)
+        return cat[a] ~= cat[b] and R[off[a] + b] ~= 0
+    end
+    return L
+end
+
+-- Solves a whole case with the logic solver, up to max_tier (default 3).
+-- Returns solved, tier-2 steps, tier-3 steps (counted one deduction at a
+-- time when `count` is true, otherwise one pass at a time).
+function Board.logicSolve(n, k, clues, max_tier, count)
+    local L = newLogic(n, k)
+    for _, cl in ipairs(clues) do L.add(cl) end
+    local ok = L.run(max_tier or 3, count)
+    local t2, t3 = L.stats()
+    return ok, t2, t3, L
+end
+
+-- ---------------------------------------------------------------------------
 -- Generator
 -- ---------------------------------------------------------------------------
 
@@ -343,81 +648,96 @@ Board.pick = pick
 -- a theme pack — or a count meaning "1..count"; `sizes` is the old name),
 -- excluded_suspect(crime_index) -> suspect index to leave out (the victim),
 -- rnd (function(m) -> 1..m, default math.random).
--- Returns a Board, or nil + "budget" if no case fitted the budgets.
+-- opts.on_progress(fraction), optional: called before each drawn case.
+-- Always returns a Board (every case it can return is solver-checked).
 function Board.generate(opts)
     local rnd = opts.rnd or math.random
     local lvl = Board.LEVELS[opts.level] or Board.LEVELS.medium
-    local n, k = lvl.n, lvl.k
-    local spent = 0
-    for try = 1, Board.MAX_TRIES + 1 do
-        local last = try > Board.MAX_TRIES or spent > Board.GEN_BUDGET
-        local weights = last and Board.FALLBACK_WEIGHTS or lvl.weights
-        local try_spent = 0
+    local n, k, tier = lvl.n, lvl.k, lvl.tier
+    local rank = { same = 1, diff = 2, either = 3, earlier = 4, before1 = 5 }
+    local best, best_miss, owner_best, best_t2, best_t3
+    local tries = 0
+    for try = 1, Board.MAX_TRIES do
+        tries = try
+        if opts.on_progress then opts.on_progress((try - 1) / Board.MAX_TRIES) end
         -- The solution: owner[c][v] = suspect owning value v of category c.
         local owner = { {} }
         for s = 1, n do owner[1][s] = s end
         for c = 2, k do owner[c] = perm(n, rnd) end
 
-        local order = drawOrder(cluePool(n, k, owner, rnd), weights, rnd)
-        local clues, ok = {}, false
+        -- True clues, one at a time, until the logic solver (limited to the
+        -- level's tier) fills every grid. Every "same" clue is in the pool,
+        -- so this always ends.
+        local order = drawOrder(cluePool(n, k, owner, rnd), lvl.weights, rnd)
+        local L = newLogic(n, k)
+        local clues = {}
+        -- An "is / is not" clue whose cell is already marked adds nothing,
+        -- now or later, so it is skipped (fewer clues to prune).
         for _, cl in ipairs(order) do
-            clues[#clues + 1] = cl
-            local cnt, used = Board.countSolutions(n, k, clues, 2)
-            spent, try_spent = spent + used, try_spent + used
-            if cnt == nil then break end
-            if cnt == 1 then ok = true break end
-            if try_spent > Board.TRY_BUDGET and not last then break end
-        end
-        if ok then
-            -- Drop what the solution doesn't need: the plainest clues go
-            -- first, so the case keeps its more interesting ones.
-            local rank = { same = 1, diff = 2, either = 3, earlier = 4, before1 = 5 }
-            local idx = {}
-            for i = 1, #clues do idx[i] = i end
-            shuffle(idx, rnd)
-            table.sort(idx, function(x, y)
-                local rx, ry = rank[clues[x].kind], rank[clues[y].kind]
-                if rx ~= ry then return rx < ry end
-                return x < y
-            end)
-            local keep = {}
-            for i = 1, #clues do keep[i] = true end
-            for _, i in ipairs(idx) do
-                if spent > Board.HARD_CAP then break end
-                keep[i] = false
-                local trial = {}
-                for j = 1, #clues do if keep[j] then trial[#trial + 1] = clues[j] end end
-                local cnt, used = Board.countSolutions(n, k, trial, 2, Board.PRUNE_BUDGET)
-                spent = spent + used
-                if cnt ~= 1 then keep[i] = true end
+            if not L.known(cl) then
+                clues[#clues + 1] = cl
+                L.add(cl)
+                if L.run(tier) then break end
             end
-            local final = {}
-            for j = 1, #clues do if keep[j] then final[#final + 1] = clues[j] end end
-            shuffle(final, rnd)
-
-            local sizes = opts.pools or opts.sizes or {}
-            local crime = pick(sizes.crimes or 1, 1, rnd)[1]
-            local exclude = {}
-            local victim = opts.excluded_suspect and opts.excluded_suspect(crime)
-            if victim then exclude[victim] = true end
-            local b = Board.new{
-                n = n, k = k, level = opts.level, owner = owner, clues = final, crime = crime,
-                names = {
-                    pick(sizes.suspects or n, n, rnd, exclude),
-                    pick(sizes.places or n, n, rnd),
-                    pick(sizes.objects or n, n, rnd),
-                },
-                -- The key fact the case opens with: the time of the crime,
-                -- or, with no times, where it happened.
-                key = { c = k >= 4 and 4 or 2, v = rnd(n) },
-            }
-            b.gen_nodes = spent
-            b.gen_tries = try
-            return b
         end
-        if last then break end
+
+        -- Drop every clue the solver can do without: the plainest first, so
+        -- the case keeps its more interesting ones. A drop is kept only if
+        -- the solver, still limited to the level's tier, finishes.
+        local idx = {}
+        for i = 1, #clues do idx[i] = i end
+        shuffle(idx, rnd)
+        table.sort(idx, function(x, y)
+            local rx, ry = rank[clues[x].kind], rank[clues[y].kind]
+            if rx ~= ry then return rx < ry end
+            return x < y
+        end)
+        local keep = {}
+        for i = 1, #clues do keep[i] = true end
+        local function kept()
+            local t = {}
+            for j = 1, #clues do if keep[j] then t[#t + 1] = clues[j] end end
+            return t
+        end
+        for _, i in ipairs(idx) do
+            keep[i] = false
+            if not Board.logicSolve(n, k, kept(), tier) then keep[i] = true end
+        end
+        local final = kept()
+        -- The order the case lists its clues in; the step counts below
+        -- read them in that order, as a player would.
+        shuffle(final, rnd)
+        local _, t2, t3 = Board.logicSolve(n, k, final, tier, true)
+        -- How far the case is from the level's window (0 = inside).
+        local miss = math.max(0, lvl.min_t2 - t2) + math.max(0, t2 - lvl.max_t2)
+                   + math.max(0, lvl.min_t3 - t3) + math.max(0, t3 - lvl.max_t3)
+        if not best or miss < best_miss then
+            best, best_miss, owner_best = final, miss, owner
+            best_t2, best_t3 = t2, t3
+        end
+        if miss == 0 then break end
     end
-    return nil, "budget"
+
+    local final, owner = best, owner_best
+    local sizes = opts.pools or opts.sizes or {}
+    local crime = pick(sizes.crimes or 1, 1, rnd)[1]
+    local exclude = {}
+    local victim = opts.excluded_suspect and opts.excluded_suspect(crime)
+    if victim then exclude[victim] = true end
+    local b = Board.new{
+        n = n, k = k, level = opts.level, owner = owner, clues = final, crime = crime,
+        names = {
+            pick(sizes.suspects or n, n, rnd, exclude),
+            pick(sizes.places or n, n, rnd),
+            pick(sizes.objects or n, n, rnd),
+        },
+        -- The key fact the case opens with: the time of the crime,
+        -- or, with no times, where it happened.
+        key = { c = k >= 4 and 4 or 2, v = rnd(n) },
+    }
+    b.gen_tries = tries
+    b.gen_t2, b.gen_t3 = best_t2, best_t3
+    return b
 end
 
 -- ---------------------------------------------------------------------------
