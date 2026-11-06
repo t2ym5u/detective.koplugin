@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.0] - 2026-11-05
+
+### Changed
+- Every case can now be solved by deduction on the grid alone, never by
+  trying an answer to see if it breaks. Before, a case only had to have one
+  answer: many Medium and most Hard cases (18 of 30 Hard cases measured)
+  could not be finished without such a guess.
+- The levels are graded by a built-in logic-grid solver: Easy needs a few
+  deductions across grids, Medium at most 25 of them and some time-order
+  reasoning, Hard at least 28 cross-grid and 15 time-order deductions. A
+  clue is dropped from a case only if the case stays solvable that way.
+- A "Generating…" progress bar shows if a Hard case takes a moment.
+- The Daily Challenge case changes once with this version (same level and
+  size, new clues).
+
 ## [1.1.3] - 2026-11-04
 
 ### Fixed

@@ -17,6 +17,7 @@ local VerticalSpan    = require("ui/widget/verticalspan")
 local _               = require("i18n")
 local T               = require("ffi/util").template
 
+local GenProgress = require("gen_progress")
 local MenuHelper = require("menu_helper")
 local Party      = require("party")
 local ScreenBase = require("screen_base")
@@ -215,13 +216,12 @@ end
 function DetectiveScreen:newCase()
     local pools, victim = Packs.pools(self:content(), self.pack)
     local opts = { level = self.level, pools = pools, excluded_suspect = victim }
-    -- Generation is bounded by work budgets, so it can (very rarely) give up;
-    -- an easy case always fits.
-    self.board = Board.generate(opts)
-    if not self.board then
-        opts.level = "easy"
+    -- A hard case can take a moment on an e-reader: the shared progress bar
+    -- shows up if it does.
+    GenProgress.run(function(on_progress)
+        opts.on_progress = on_progress
         self.board = Board.generate(opts)
-    end
+    end)
     self.pair = 1
     self.clue_page = 1
     self.hint_cell = nil

@@ -48,10 +48,17 @@ lay the reader in the middle of the table and investigate together.
 ## Features
 
 - **Generated cases**: Easy 3 suspects × 3 categories, Medium 4 × 4 (with
-  times), Hard 5 suspects × 4 categories. The generator keeps adding true
-  clues until exactly one solution is left, then drops every clue the
-  solution doesn't need. Work is capped by iteration budgets (not the clock);
-  a hard case takes under 50 ms on a desktop.
+  times), Hard 5 suspects × 4 categories. Every case can be solved on the
+  grid by pure deduction, never by trying an answer to see if it breaks:
+  the generator adds true clues until a built-in logic-grid solver fills
+  every grid, then drops every clue that solver can do without.
+- **Levels** are graded by that solver: Easy needs only a few deductions
+  across grids (a dot in one grid tells you something in another); Medium
+  up to 25 of them plus some time-order reasoning ("earlier than", "one hour
+  before"); Hard at least 28 cross-grid and 15 time-order deductions. Work is
+  capped by attempt counts (not the clock), so a seed gives the same case on
+  every device; a hard case takes about 35 ms at worst on a desktop (a
+  progress bar shows if it takes a moment on the reader).
 - Clue kinds: "is / is not", "either … or …", "one hour before", "earlier
   than", each with three or four phrasings ("A witness is certain: …",
   "… and … are two different people", "One hour after …, …").

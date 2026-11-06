@@ -46,19 +46,75 @@ describe("Detective generator", function()
             end
         end)
 
-        it(level .. ": no clue is redundant", function()
+        it(level .. ": the logic solver finishes every case within the level's tier, no trial", function()
+            local lvl = Board.LEVELS[level]
+            for seed = 1, 30 do
+                math.randomseed(seed * 211)
+                local b = gen(level)
+                local ok, t2, t3 = Board.logicSolve(b.n, b.k, b.clues, lvl.tier, true)
+                assert.is_true(ok, level .. " seed " .. seed)
+                assert.are.equal(b.gen_t2, t2)
+                assert.are.equal(b.gen_t3, t3)
+            end
+        end)
+
+        it(level .. ": no clue can be dropped while the solver still finishes", function()
+            local tier = Board.LEVELS[level].tier
             math.randomseed(202)
             for _ = 1, 10 do
                 local b = gen(level)
                 for i = 1, #b.clues do
                     local rest = {}
                     for j, cl in ipairs(b.clues) do if j ~= i then rest[#rest + 1] = cl end end
-                    local cnt = Board.countSolutions(b.n, b.k, rest, 2, 1e8)
-                    assert.are.equal(2, cnt)
+                    assert.is_false((Board.logicSolve(b.n, b.k, rest, tier)))
                 end
             end
         end)
     end
+
+    it("the logic solver never marks a cell wrongly, and agrees with the search", function()
+        -- Random subsets of real clues: whatever it marks matches the stored
+        -- solution, and when it finishes the search finds one solution.
+        math.randomseed(31)
+        for t = 1, 150 do
+            local level = Board.LEVEL_ORDER[t % 3 + 1]
+            local b = gen(level)
+            local sub = {}
+            for _, cl in ipairs(b.clues) do if math.random(4) > 1 then sub[#sub + 1] = cl end end
+            local ok, _, _, L = Board.logicSolve(b.n, b.k, sub, 3)
+            assert.is_false(L.broken())
+            for c1 = 1, b.k do for v1 = 1, b.n do for c2 = 1, b.k do for v2 = 1, b.n do
+                if c1 ~= c2 then
+                    local m = L.mark((c1 - 1) * b.n + v1, (c2 - 1) * b.n + v2)
+                    if m ~= nil then
+                        assert.are.equal(b.owner[c1][v1] == b.owner[c2][v2], m)
+                    end
+                end
+            end end end end
+            if ok then assert.are.equal(1, (Board.countSolutions(b.n, b.k, sub, 2, 1e8))) end
+        end
+    end)
+
+    it("levels differ: cross-grid and time steps grow from Easy to Hard", function()
+        local med = {}
+        for _, level in ipairs(Board.LEVEL_ORDER) do
+            local lvl, t2s, t3s = Board.LEVELS[level], {}, {}
+            for seed = 1, 30 do
+                math.randomseed(seed * 211)
+                local b = gen(level)
+                assert.is_true(b.gen_t2 >= lvl.min_t2 and b.gen_t2 <= lvl.max_t2, level)
+                assert.is_true(b.gen_t3 >= lvl.min_t3 and b.gen_t3 <= lvl.max_t3, level)
+                t2s[#t2s + 1], t3s[#t3s + 1] = b.gen_t2, b.gen_t3
+            end
+            table.sort(t2s); table.sort(t3s)
+            med[level] = { t2s[15], t3s[15], t2s[1], t2s[30] }
+            print(string.format("\n  %s: tier-2 steps %d..%d (median %d), tier-3 median %d",
+                level, t2s[1], t2s[30], t2s[15], t3s[15]))
+        end
+        assert.is_true(med.easy[4] < med.medium[3])     -- every Medium above every Easy
+        assert.is_true(med.medium[4] < med.hard[3])     -- every Hard above every Medium
+        assert.is_true(med.easy[2] < med.medium[2] and med.medium[2] < med.hard[2])
+    end)
 
     it("sizes: easy 3x3 (3 categories), medium 4x4, hard 5x5 (4 categories)", function()
         local e, m, h = gen("easy"), gen("medium"), gen("hard")
@@ -69,30 +125,54 @@ describe("Detective generator", function()
         assert.are.equal(4, h.key.c)   -- with times: when it happened
     end)
 
-    it("hard generation stays within its work budget and is fast", function()
-        math.randomseed(303)
-        local worst_t, worst_w = 0, 0
-        for _ = 1, 40 do
-            local t0 = os.clock()
-            local b = gen("hard")
-            worst_t = math.max(worst_t, os.clock() - t0)
-            worst_w = math.max(worst_w, b.gen_nodes)
+    it("generation is fast at every level", function()
+        for _, level in ipairs(Board.LEVEL_ORDER) do
+            local worst = 0
+            for seed = 1, 30 do
+                local best = math.huge
+                for _ = 1, 3 do
+                    math.randomseed(seed * 977)
+                    local t0 = os.clock()
+                    gen(level)
+                    best = math.min(best, os.clock() - t0)
+                end
+                worst = math.max(worst, best)
+            end
+            print(string.format("\n  %s: worst %.1f ms", level, worst * 1000))
+            -- About 40 ms is the target on a desktop (an e-reader is ~25x
+            -- slower and shows the progress bar); a wide margin here.
+            assert.is_true(worst < 0.25)
         end
-        -- Budget: GEN_BUDGET for the normal tries plus one last plain try
-        -- (each solution count is capped at COUNT_BUDGET).
-        assert.is_true(worst_w < Board.GEN_BUDGET + 60 * Board.COUNT_BUDGET)
-        -- Plain Lua on a desktop; a slow e-reader runs LuaJIT, so this leaves a
-        -- wide margin under the 3 s target.
-        print(string.format("\n  hard: worst %.0f ms, worst work %d", worst_t * 1000, worst_w))
-        assert.is_true(worst_t < 1.0)
     end)
 
     it("the same seed gives the same case (daily challenge)", function()
-        math.randomseed(20261030)
-        local a = gen("hard")
-        math.randomseed(20261030)
-        local b = gen("hard")
-        assert.are.same(a:serialize(), b:serialize())
+        for _, level in ipairs(Board.LEVEL_ORDER) do
+            math.randomseed(20261030)
+            local a = gen(level)
+            math.randomseed(20261030)
+            local b = gen(level)
+            assert.are.same(a:serialize(), b:serialize())
+        end
+    end)
+
+    it("a case saved by 1.1.x still loads and plays", function()
+        local old = { names = { { 4, 2, 3, 1 }, { 4, 3, 2, 1 }, { 2, 3, 4, 1 } }, level = "medium",
+            key = { c = 4, v = 1 }, owner = { { 1, 2, 3, 4 }, { 3, 4, 1, 2 }, { 1, 4, 3, 2 }, { 3, 1, 4, 2 } },
+            k = 4, hints_used = 0, struck = {}, crime = 1, n = 4,
+            clues = { { a = { c = 3, v = 3 }, b2 = { c = 1, v = 4 }, kind = "either", b = { c = 1, v = 3 } },
+                { a = { c = 3, v = 1 }, kind = "same", b = { c = 4, v = 2 } },
+                { a = { c = 2, v = 1 }, kind = "same", b = { c = 3, v = 3 } },
+                { a = { c = 1, v = 4 }, kind = "diff", b = { c = 2, v = 4 } },
+                { a = { c = 1, v = 2 }, kind = "diff", b = { c = 4, v = 3 } },
+                { a = { c = 1, v = 4 }, b2 = { c = 3, v = 1 }, kind = "either", b = { c = 3, v = 2 } },
+                { a = { c = 1, v = 1 }, kind = "earlier", b = { c = 3, v = 4 } },
+                { a = { c = 4, v = 3 }, b2 = { c = 1, v = 4 }, kind = "either", b = { c = 1, v = 2 } },
+                { a = { c = 2, v = 3 }, b2 = { c = 4, v = 2 }, kind = "either", b = { c = 4, v = 1 } } } }
+        local b = assert(Board.load(old))
+        assert.are.equal(0, b:getMark(1, 1, 1))
+        b:cycle(1, 1, 1)
+        local s, p, o = b:culprit()
+        assert.is_true(b:accuse(s, p, o))
     end)
 
     it("victims are never suspects in their own case", function()
