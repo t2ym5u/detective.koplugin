@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1] - 2026-11-09
+
+### Fixed
+- A language tried once in the game's Language menu no longer sticks for
+  good: the game follows KOReader's language (French when KOReader is in
+  French), and a language picked in the game holds until KOReader's language
+  changes. A language picked with an earlier version is forgotten once.
+
 ## [1.2.0] - 2026-11-05
 
 ### Changed

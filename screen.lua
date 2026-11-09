@@ -162,7 +162,7 @@ local CONTENT_VERSION = 2
 
 function DetectiveScreen:init()
     local p = self.plugin
-    self.lang  = p:getSetting("lang", _.lang() == "fr" and "fr" or "en")
+    self.lang  = p:getLang({ "fr", "en" })
     self.level = p:getSetting("level", "easy")
     self.pack  = p:getSetting("pack", "all")
     self.party = p.launch_mode == "party"
@@ -481,7 +481,7 @@ function DetectiveScreen:openLangMenu()
         on_select  = function(lang)
             if lang == self.lang then return end
             self.lang = lang
-            self.plugin:saveSetting("lang", lang)
+            self.plugin:setLang(lang)
             self:onNewGame()
         end,
     }
