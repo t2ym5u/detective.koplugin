@@ -47,4 +47,9 @@ return {
     ["Nobody scores this case."] = { fr = "Personne ne marque dans cette affaire.", es = "Nadie puntúa en este caso.", de = "Niemand punktet in diesem Fall." },
     ["Can accuse: %1"] = { fr = "Peuvent accuser : %1", es = "Pueden acusar: %1", de = "Dürfen beschuldigen: %1" },
     ["Scores: %1"] = { fr = "Scores : %1", es = "Puntos: %1", de = "Punkte: %1" },
+    -- Case for Two (two readers)
+    ["Case for Two"] = { fr = "Enquête à deux", es = "Caso a dos", de = "Fall zu zweit" },
+    ["Detective %1"] = { fr = "Détective %1", es = "Detective %1", de = "Detektiv %1" },
+    ["Your clues: %1 of %2"] = { fr = "Vos indices : %1 sur %2", es = "Sus pistas: %1 de %2", de = "Deine Hinweise: %1 von %2" },
+    ["The other detective has the clues missing here."] = { fr = "L'autre détective a les indices qui manquent ici.", es = "El otro detective tiene las pistas que faltan aquí.", de = "Der andere Detektiv hat die Hinweise, die hier fehlen." },
 }

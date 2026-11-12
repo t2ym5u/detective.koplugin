@@ -77,6 +77,16 @@ lay the reader in the middle of the table and investigate together.
   Interface in English, French, Spanish and German.
 - The case in progress is saved when you close the game.
 
+## Case for Two (two readers)
+
+**Case for Two** (FR *Enquête à deux*) is a mode for two players with a
+reader each, under **Tools → Games → Two readers**. One player starts a game
+and reads its five-digit code aloud; the other joins with it. Both readers
+deal the same case (the code carries the difficulty and the language), but
+each shows only half of the clues — the odd ones or the even ones — and
+neither half is enough on its own. Read your clues to each other, fill your
+own logic grid, and accuse when you both know. No hints in this mode.
+
 ## Installation
 
 Copy `detective.koplugin/` (with the `common/` folder from `game-common`)

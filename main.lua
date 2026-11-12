@@ -53,6 +53,9 @@ local Detective = PluginBase:extend{
     menu_text = _("Detective"),
     menu_hint = "tools",
     party_mode = true,
+    -- Case for Two: two players with a reader each share out the clues.
+    duo_mode      = true,
+    duo_menu_text = _("Case for Two"),
 }
 
 function Detective:createScreen()

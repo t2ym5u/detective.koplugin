@@ -594,14 +594,15 @@ end
 
 -- Draws clues from the pool by kind weight until it is empty.
 local function drawOrder(pool, weights, rnd)
+    -- Kinds in a fixed order before any draw: pairs() order may differ
+    -- between LuaJIT builds, and two readers must deal the same case from
+    -- the same seed (two-reader mode, daily challenge).
     local kinds = {}
     for kind, list in pairs(pool) do
-        if weights[kind] and #list > 0 then
-            shuffle(list, rnd)
-            kinds[#kinds + 1] = kind
-        end
+        if weights[kind] and #list > 0 then kinds[#kinds + 1] = kind end
     end
     table.sort(kinds)
+    for _, kind in ipairs(kinds) do shuffle(pool[kind], rnd) end
     local out = {}
     while true do
         local total = 0

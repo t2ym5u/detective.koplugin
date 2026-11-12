@@ -17,6 +17,7 @@ local VerticalSpan    = require("ui/widget/verticalspan")
 local _               = require("i18n")
 local T               = require("ffi/util").template
 
+local Duo        = require("duo")
 local GenProgress = require("gen_progress")
 local MenuHelper = require("menu_helper")
 local Party      = require("party")
@@ -120,7 +121,61 @@ Points : une accusation juste rapporte 1 point + 1 par indice encore caché — 
 Fin de la partie : après la dernière affaire, le tableau des scores désigne le gagnant ; à meilleur score égal, c'est une égalité. La barre d'actions propose Affaire suivante (puis Nouvelle partie) et Scores. Pas d'astuces ni de Défi du jour à plusieurs. La partie est sauvegardée à part de votre affaire en solo.
 ]]
 
+local RULES_DUO_EN = [[
+Case for Two — Rules
+
+Two detectives, one reader each, one case. Both readers deal the same case from a game code, but share out its clues: each reader shows only half of them. Talk it through and solve it together!
+
+Starting
+• One player taps New game → Start a game and reads the code aloud. The other taps New game → Join a game and types it. One is detective 1, the other detective 2. The code carries the difficulty and the language of the case.
+• Both readers need the same version of the game, so that they deal the same case.
+
+Playing
+• Read your clues to each other — neither half is enough on its own. Clues keep their numbers, so you can say "clue 4".
+• Each one fills their own logic grid: tap a cell once for a cross (no), twice for a dot (yes), a third time to clear it.
+• Accuse together when you know: each reader checks its own accusation. One accusation per case and per reader.
+
+The case itself works as in solo: each suspect was in exactly one place, had exactly one object and (in Medium and Hard) came at exactly one time, and only one answer fits all the clues. No hints in this mode.
+]]
+
+local RULES_DUO_FR = [[
+Enquête à deux — Règles
+
+Deux détectives, une liseuse chacun, une seule affaire. Les deux liseuses tirent la même affaire à partir d'un code, mais se partagent ses indices : chacune n'en montre que la moitié. Parlez-en et résolvez-la ensemble !
+
+Pour commencer
+• Un joueur touche Nouvelle partie → Lancer une partie et lit le code à voix haute. L'autre touche Nouvelle partie → Rejoindre une partie et le saisit. L'un est le détective 1, l'autre le détective 2. Le code porte la difficulté et la langue de l'affaire.
+• Les deux liseuses doivent avoir la même version du jeu, pour tirer la même affaire.
+
+Déroulement
+• Lisez-vous vos indices : aucune moitié ne suffit seule. Les indices gardent leur numéro : vous pouvez dire « l'indice 4 ».
+• Chacun remplit sa propre grille logique : touchez une case une fois pour une croix (non), deux fois pour un rond (oui), une troisième fois pour l'effacer.
+• Accusez ensemble quand vous savez : chaque liseuse vérifie sa propre accusation. Une accusation par affaire et par liseuse.
+
+L'affaire fonctionne comme en solo : chaque suspect était dans un seul lieu, avait un seul objet et (en Moyen et Difficile) était là à une seule heure, et une seule réponse respecte tous les indices. Pas d'astuces dans ce mode.
+]]
+
+local ALL_RULES = {
+    solo  = { RULES_EN, RULES_FR },
+    party = { RULES_PARTY_EN, RULES_PARTY_FR },
+    duo   = { RULES_DUO_EN, RULES_DUO_FR },
+}
+
 local LEVEL_LABELS = { easy = _("Easy"), medium = _("Medium"), hard = _("Hard") }
+
+-- Two readers: the game code carries the level and the language.
+local DUO_LANGS = { "fr", "en" }
+
+local function duoVariant(level, lang)
+    local li = 1
+    for i, id in ipairs(Board.LEVEL_ORDER) do if id == level then li = i end end
+    return (lang == "en" and 1 or 0) * #Board.LEVEL_ORDER + li
+end
+
+local function duoSplit(v)
+    local n = #Board.LEVEL_ORDER
+    return Board.LEVEL_ORDER[(v - 1) % n + 1], DUO_LANGS[math.floor((v - 1) / n) + 1]
+end
 
 -- Tab names per category pair: "Who·Where"...
 local CAT_SHORT = { _("Who"), _("Where"), _("What"), _("When") }
@@ -166,6 +221,7 @@ function DetectiveScreen:init()
     self.level = p:getSetting("level", "easy")
     self.pack  = p:getSetting("pack", "all")
     self.party = p.launch_mode == "party"
+    self.duo   = p.launch_mode == "duo"
     self:restore()
     ScreenBase.init(self)
 end
@@ -179,6 +235,14 @@ function DetectiveScreen:restore()
     self.view  = "clues"  -- portrait shows the clues or the grid
     self.rounds = p:getSetting("party_rounds", 3)
     local saved = p:loadState(self:stateKey())
+    if self.duo then
+        -- A two-reader case keeps the language its code gave it.
+        if saved and type(saved.duo) == "table" then
+            self.lang = saved.lang
+            self.duo_game = saved.duo
+        end
+        if not self.duo_game then saved = nil end
+    end
     -- A save from another language, or from before the content grew
     -- (indices into the old lists), starts a new case instead.
     self.board = saved and saved.lang == self.lang and saved.content == CONTENT_VERSION
@@ -194,13 +258,13 @@ function DetectiveScreen:restore()
         self:attachWording()
     elseif self.party then
         self:newMatch()
-    else
+    elseif not self.duo then
         self:newCase()
     end
 end
 
 function DetectiveScreen:stateKey()
-    return self.party and "party_state" or nil
+    return self.party and "party_state" or self.duo and "duo_state" or nil
 end
 
 function DetectiveScreen:content()
@@ -230,6 +294,39 @@ function DetectiveScreen:newCase()
     self:attachWording()
 end
 
+-- Two readers: the case of the game code, the same on both readers.
+function DetectiveScreen:newDuoCase(game)
+    local level, lang = duoSplit(game.variant)
+    self.lang = lang
+    self.duo_game = { seed = game.seed, variant = game.variant, role = game.role, code = game.code }
+    local pools, victim = Packs.pools(self:content(), "all")
+    local rng = Duo.rng(game.seed, "detective")
+    local opts = { level = level, pools = pools, excluded_suspect = victim, rnd = rng:fn() }
+    GenProgress.run(function(on_progress)
+        opts.on_progress = on_progress
+        self.board = Board.generate(opts)
+    end)
+    self.pair = 1
+    self.clue_page = 1
+    self.view = "clues"
+    self:attachWording()
+end
+
+-- Clue i is on this reader: detective 1 has the odd ones, 2 the even ones.
+-- Once the case is closed, both see them all.
+function DetectiveScreen:isMyClue(i)
+    if not self.duo or self.board.over then return true end
+    return (i % 2 == 1) == (self.duo_game.role == 1)
+end
+
+function DetectiveScreen:myClueCount()
+    local n = 0
+    for i = 1, #self.board.clues do
+        if self:isMyClue(i) then n = n + 1 end
+    end
+    return n
+end
+
 -- Multiplayer: fresh scores for the players set up, and the first case.
 function DetectiveScreen:newMatch()
     local p = self.plugin
@@ -245,16 +342,18 @@ function DetectiveScreen:serializeState()
         t.scores = Party.copyScores(self.scores)
         t.case   = PartyCase.copy(self.pcase)
     end
+    if self.duo then t.duo = self.duo_game end
     return t
 end
 
 function DetectiveScreen:save()
+    if not self.board then return end
     self.plugin:saveState(self:serializeState(), self:stateKey())
 end
 
 -- ScreenBase's version saves under the solo key.
 function DetectiveScreen:closeScreen()
-    if not self.party then return ScreenBase.closeScreen(self) end
+    if not self.party and not self.duo then return ScreenBase.closeScreen(self) end
     self:save()
     self.plugin:onScreenClosed()
     UIManager:close(self)
@@ -267,13 +366,43 @@ function DetectiveScreen:rebuild()
 end
 
 function DetectiveScreen:onNewGame()
+    if self.duo then return self:openDuoDialog() end
     if self.party then self:newMatch() else self:newCase() end
     self:save()
     self:rebuild()
 end
 
 function DetectiveScreen:isRoundOver()
+    if self.duo and not self.board then return true end
     return self.board ~= nil and self.board.over ~= nil
+end
+
+function DetectiveScreen:openDuoDialog()
+    Duo.newGameDialog{
+        title     = _("Case for Two"),
+        nvariants = #Board.LEVEL_ORDER * #DUO_LANGS,
+        variant   = duoVariant(self.level, self.plugin:getLang({ "fr", "en" })),
+        variant_text = function(v)
+            local level, lang = duoSplit(v)
+            return self:joinStatus(LEVEL_LABELS[level], lang == "fr" and "Français" or "English")
+        end,
+        roles = {
+            { id = 1, text = T(_("Detective %1"), 1) },
+            { id = 2, text = T(_("Detective %1"), 2) },
+        },
+        on_start = function(game)
+            self:newDuoCase(game)
+            self:save()
+            self:rebuild()
+        end,
+    }
+end
+
+function DetectiveScreen:showDuoCode()
+    local g = self.duo_game
+    local level, lang = duoSplit(g.variant)
+    self:showMessage(T(_("Game code: %1"), Duo.format(g.code)) .. "\n"
+        .. self:joinStatus(LEVEL_LABELS[level], lang == "fr" and "Français" or "English"), 6)
 end
 
 -- Multiplayer: the last case of the match is closed.
@@ -543,6 +672,28 @@ function DetectiveScreen:openModeMenu()
 end
 
 function DetectiveScreen:menuItems()
+    if self.duo then
+        local items = {
+            { text = _("New game"), callback = function() self:onNewGame() end },
+            { text = T(_("Difficulty: %1"), LEVEL_LABELS[self.level]), callback = function()
+                local items = {}
+                for _i, id in ipairs(Board.LEVEL_ORDER) do items[#items + 1] = { id = id, text = LEVEL_LABELS[id] } end
+                MenuHelper.openPickerMenu{
+                    title = _("Difficulty of the games you start"), items = items, current_id = self.level, parent = self,
+                    on_select = function(id)
+                        self.level = id
+                        self.plugin:saveSetting("level", id)
+                    end,
+                }
+            end },
+        }
+        if self.board then
+            items[#items + 1] = { text = _("Show the game code"), callback = function() self:showDuoCode() end }
+            items[#items + 1] = { text = _("Show solution"), callback = function() self:onShowSolution() end }
+        end
+        items[#items + 1] = self:makeModeRulesButtonConfig(ALL_RULES)
+        return items
+    end
     local mode = { text = T(_("Mode: %1"), self.party and _("Multiplayer") or _("Solo")),
                    callback = function() self:openModeMenu() end }
     local level = { text = T(_("Difficulty: %1"), LEVEL_LABELS[self.level]), callback = function() self:openLevelMenu() end }
@@ -560,14 +711,14 @@ function DetectiveScreen:menuItems()
             end },
             { text = T(_("Rounds: %1"), self.rounds), callback = function() self:openRoundsMenu() end },
             level, lang, pack, mode, solution,
-            self:makeModeRulesButtonConfig({ solo = { RULES_EN, RULES_FR }, party = { RULES_PARTY_EN, RULES_PARTY_FR } }),
+            self:makeModeRulesButtonConfig(ALL_RULES),
         }
     end
     return {
         { text = _("New game"), callback = function() self:onNewGame() end },
         self:makeDailyButtonConfig(),
         level, lang, pack, mode, solution,
-        self:makeModeRulesButtonConfig({ solo = { RULES_EN, RULES_FR }, party = { RULES_PARTY_EN, RULES_PARTY_FR } }),
+        self:makeModeRulesButtonConfig(ALL_RULES),
     }
 end
 
@@ -590,12 +741,21 @@ end
 function DetectiveScreen:updateStatus(msg)
     if msg then return ScreenBase.updateStatus(self, msg) end
     local b = self.board
+    if self.duo and not b then return ScreenBase.updateStatus(self, _("Start or join a game.")) end
     if self.party then return self:updatePartyStatus() end
     if b.over then
         -- The full answer is too long for one status line: it heads the
         -- clue list instead.
         return ScreenBase.updateStatus(self, b.over == "solved" and _("Case solved!")
             or b.over == "failed" and _("Case lost.") or _("Solution shown."))
+    end
+    if self.duo then
+        return ScreenBase.updateStatus(self, self:joinStatus(
+            T(_("Detective %1"), self.duo_game.role),
+            LEVEL_LABELS[b.level] or b.level,
+            T(_("Your clues: %1 of %2"), self:myClueCount(), #b.clues),
+            (self.clue_pages or 1) > 1 and (self.view == "clues" or self:isLandscape())
+                and T(_("Page %1/%2"), self.clue_page, self.clue_pages) or nil))
     end
     ScreenBase.updateStatus(self, self:joinStatus(
         T("%1×%2", b.n, b.n),
@@ -718,12 +878,15 @@ function DetectiveScreen:buildClues(w, h, px)
     if self.party then entries[1].text = entries[1].text .. "\n" .. self:partyLines() end
     -- Multiplayer: only the clues revealed so far, all of them once closed.
     local shown = (self.party and not b.over) and self.pcase.revealed or #b.clues
+    if self.duo and not b.over then
+        entries[1].text = entries[1].text .. "\n" .. _("The other detective has the clues missing here.")
+    end
     for i, cl in ipairs(b.clues) do
         if i > shown then break end
-        entries[#entries + 1] = {
+        if self:isMyClue(i) then entries[#entries + 1] = {
             text = T("%1. %2", i, self.words:text(cl, i)), dim = b.struck[i],
             callback = function() self:toggleClue(i) end,
-        }
+        } end
     end
     local lines = {}
     for i, e in ipairs(entries) do
@@ -779,6 +942,15 @@ function DetectiveScreen:actionRow(kind)
         -- The landscape side panel is narrow: two rows.
         return { { prev, undo, nxt }, { more, accuse } }
     end
+    if self.duo then
+        -- No hints: they would use the other detective's clues.
+        if kind == "clues" then
+            return { { text = _("Grid"), callback = function() self:setView("grid") end }, prev, nxt, accuse }
+        elseif kind == "grid" then
+            return { { text = _("Clues"), callback = function() self:setView("clues") end }, undo, accuse }
+        end
+        return { prev, undo, accuse, nxt }
+    end
     if kind == "clues" then
         return { { text = _("Grid"), callback = function() self:setView("grid") end }, prev, nxt, accuse }
     elseif kind == "grid" then
@@ -794,7 +966,24 @@ function DetectiveScreen:barRows(kind)
 end
 
 function DetectiveScreen:buildLayout()
-    local title_bar = self:buildTitleBar(_("Detective"), function() return self:menuItems() end)
+    local title_bar = self:buildTitleBar(self.duo and _("Case for Two") or _("Detective"),
+        function() return self:menuItems() end)
+    if self.duo and not self.board then
+        -- Two readers, no game yet: say how one starts.
+        self.status_text:setMaxWidth(self:getControlsWidth())
+        local controls = VerticalGroup:new{ align = "center", self.status_text,
+            VerticalSpan:new{ width = Size.span.vertical_large }, self:buildActionBar({}) }
+        local text = TextBoxWidget:new{
+            text = _("Each player needs a reader with this game. One starts a game and reads the code aloud; the other joins with that code."),
+            face = Font:getFace("infofont"),
+            width = math.min(self:getControlsWidth(), DeviceScreen:scaleBySize(500)),
+            alignment = "center",
+        }
+        self:buildPortraitLayout(title_bar, text,
+            VerticalGroup:new{ align = "center", controls, VerticalSpan:new{ width = self:getGutter() } })
+        self:updateStatus()
+        return
+    end
     local g = self:getGutter()
     local gap = Size.span.vertical_large
     local sc = self:scale()

@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0] - 2026-11-10
+
+### Added
+- Case for Two (FR Enquête à deux), a mode for two players with a reader
+  each, listed under Tools → Games → Two readers. Both readers deal the
+  same case from a five-digit game code (it carries the difficulty and the
+  language) and share out its clues: each one shows half of them, and
+  neither half is enough on its own. No hints in this mode. Needs
+  game-common 1.16.0.
+
+### Changed
+- The case generator draws its clues in a fixed order, so every reader
+  deals the same case from the same seed whatever its LuaJIT build. Today's
+  Daily Challenge case changes once because of it.
+
 ## [1.2.1] - 2026-11-09
 
 ### Fixed
