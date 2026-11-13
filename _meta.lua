@@ -2,5 +2,5 @@ local _ = require("gettext")
 return {
     fullname    = _("Detective"),
     description = _("Logic deduction cases: read the clues, fill the grid, find who did it, where and with what."),
-    version     = "1.3.0",
+    version     = "1.4.0",
 }

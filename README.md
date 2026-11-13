@@ -71,8 +71,9 @@ lay the reader in the middle of the table and investigate together.
 - **Daily Challenge**: today's case, the same for everyone.
 - **Show solution** fills the grid and closes the case.
 - Cases in French or English (*Language* setting, defaults to KOReader's
-  language): about 90 crimes, 180 suspects, 116 places and 110–125 objects
-  per language, with a *Theme* setting (all, history, art, science, fiction,
+  language): in French about 330 crimes, 310 suspects, 200 places and 190
+  objects; in English about 90 crimes, 180 suspects, 116 places and 125
+  objects; with a *Theme* setting (all, history, art, science, fiction,
   world) to pick which ones a case draws from.
   Interface in English, French, Spanish and German.
 - The case in progress is saved when you close the game.

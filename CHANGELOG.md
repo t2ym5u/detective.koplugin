@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.0] - 2026-11-13
+
+### Added
+- Many more French cases: 334 crimes instead of 89, 311 suspects instead of
+  176, 200 places instead of 116 and 192 objects instead of 112, spread over
+  the five themes. English content is unchanged.
+
+### Changed
+- Because the French content grew, today's French Daily Challenge case
+  changes once, and a Case for Two game code dealt in French gives the same
+  case only when both readers run 1.4.0 or later.
+
 ## [1.3.0] - 2026-11-10
 
 ### Added
